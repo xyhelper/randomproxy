@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/gogf/gf/v2/container/garray"
 	"github.com/gogf/gf/v2/frame/g"
@@ -14,21 +15,33 @@ import (
 
 func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 	var IPS []interface{}
-	// 根据r.Host获取IP
-	serverIP := net.ParseIP(r.Host)
-	if serverIP != nil {
-		g.Log().Debug(ctx, "serverIP", serverIP.String())
-		// 如果是IPV4地址
-		if serverIP.To4() != nil {
-			g.Log().Debug(ctx, "serverIP.To4()", serverIP.To4().String())
-			IPS = g.Cfg().MustGet(ctx, "IPS").Slice()
-		}
-		// 如果是IPV6地址
-		if serverIP.To16() != nil {
-			g.Log().Debug(ctx, "serverIP.To16()", serverIP.To16().String())
-			IPS = g.Cfg().MustGet(ctx, "IP6S").Slice()
-		}
+	// 获取域名不带端口
+	host, _, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		g.Log().Error(ctx, err.Error())
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
 	}
+	g.Log().Debug(ctx, "host", host)
+	// 根据r.Host获取IP
+
+	serverIP, isipv6, err := getIPAddress(host)
+	if err != nil {
+		g.Log().Error(ctx, err.Error())
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	if isipv6 {
+		g.Log().Debug(ctx, "serverIP", serverIP)
+		IPS = g.Cfg().MustGet(ctx, "IP6S").Slice()
+	} else {
+		g.Log().Debug(ctx, "serverIP", serverIP)
+		IPS = g.Cfg().MustGet(ctx, "IPS").Slice()
+	}
+	if len(IPS) == 0 {
+		IPS = g.Cfg().MustGet(ctx, "IPS").Slice()
+	}
+
 	IPA := garray.NewArrayFrom(IPS)
 	IP, found := IPA.Rand()
 	if !found {
@@ -92,7 +105,19 @@ func copyHeader(dst, src http.Header) {
 		}
 	}
 }
-
+func getIPAddress(domain string) (ip string, ipv6 bool, err error) {
+	ipAddresses, err := net.LookupHost(domain)
+	if err != nil {
+		return "", false, err
+	}
+	for _, ipAddress := range ipAddresses {
+		// 如果是地址包含 : 说明是IPV6地址
+		if strings.Contains(ipAddress, ":") {
+			return ipAddress, true, nil
+		}
+	}
+	return ipAddresses[0], false, nil
+}
 func main() {
 	ctx := gctx.New()
 
