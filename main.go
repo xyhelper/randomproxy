@@ -13,7 +13,22 @@ import (
 )
 
 func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
-	IPS := g.Cfg().MustGet(ctx, "IPS").Slice()
+	var IPS []interface{}
+	// 根据r.Host获取IP
+	serverIP := net.ParseIP(r.Host)
+	if serverIP != nil {
+		g.Log().Debug(ctx, "serverIP", serverIP.String())
+		// 如果是IPV4地址
+		if serverIP.To4() != nil {
+			g.Log().Debug(ctx, "serverIP.To4()", serverIP.To4().String())
+			IPS = g.Cfg().MustGet(ctx, "IPS").Slice()
+		}
+		// 如果是IPV6地址
+		if serverIP.To16() != nil {
+			g.Log().Debug(ctx, "serverIP.To16()", serverIP.To16().String())
+			IPS = g.Cfg().MustGet(ctx, "IP6S").Slice()
+		}
+	}
 	IPA := garray.NewArrayFrom(IPS)
 	IP, found := IPA.Rand()
 	if !found {
@@ -80,6 +95,7 @@ func copyHeader(dst, src http.Header) {
 
 func main() {
 	ctx := gctx.New()
+
 	server := &http.Server{
 		Addr: ":31280",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
