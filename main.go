@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"strings"
@@ -13,6 +14,26 @@ import (
 	"github.com/gogf/gf/v2/util/gconv"
 )
 
+func randomIPV6FromSubnet(network string) (net.IP, error) {
+	_, subnet, err := net.ParseCIDR(network)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the prefix of the subnet.
+	prefix := subnet.IP.To16()
+	println("prefix: ", prefix.String())
+
+	// Seed the random number generator.
+	// rand.Seed(time.Now().UnixNano())
+
+	// Generate a random IPv6 address from the subnet.
+	for i := 12; i < len(prefix); i++ {
+		prefix[i] = byte(rand.Intn(256))
+	}
+
+	return prefix, nil
+}
 func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 	var IPS []interface{}
 	// 获取域名不带端口
@@ -50,6 +71,12 @@ func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := gconv.String(IP)
+	ipv6sub := g.Cfg().MustGet(ctx, "IP6SUB").String()
+	if isipv6 && ipv6sub != "" {
+		tempIP, _ := randomIPV6FromSubnet(ipv6sub)
+		ip = tempIP.String()
+	}
+
 	g.Log().Debug(ctx, "ip", ip)
 	dialer := &net.Dialer{
 		LocalAddr: &net.TCPAddr{IP: net.ParseIP(ip), Port: 0},
