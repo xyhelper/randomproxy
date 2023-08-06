@@ -19,16 +19,19 @@ func randomIPV6FromSubnet(network string) (net.IP, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	// 获取子网掩码位长度
+	ones, _ := subnet.Mask.Size()
+	// g.Dump(ones)
+	// g.Dump(bits)
 	// Get the prefix of the subnet.
 	prefix := subnet.IP.To16()
-	println("prefix: ", prefix.String())
+	// println("prefix: ", prefix.String())
 
 	// Seed the random number generator.
 	// rand.Seed(time.Now().UnixNano())
 
 	// Generate a random IPv6 address from the subnet.
-	for i := 12; i < len(prefix); i++ {
+	for i := ones / 8; i < len(prefix); i++ {
 		prefix[i] = byte(rand.Intn(256))
 	}
 
@@ -77,7 +80,7 @@ func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 		ip = tempIP.String()
 	}
 
-	g.Log().Debug(ctx, "ip", ip)
+	// g.Log().Debug(ctx, "ip", ip)
 	dialer := &net.Dialer{
 		LocalAddr: &net.TCPAddr{IP: net.ParseIP(ip), Port: 0},
 	}
