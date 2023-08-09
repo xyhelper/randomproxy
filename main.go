@@ -150,9 +150,14 @@ func getIPAddress(domain string) (ip string, ipv6 bool, err error) {
 }
 func main() {
 	ctx := gctx.New()
+	Addr := ":31280"
+	port := g.Cfg().MustGet(ctx, "PORT").String()
+	if port != "" {
+		Addr = ":" + port
+	}
 
 	server := &http.Server{
-		Addr: ":31280",
+		Addr: Addr,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// g.DumpWithType(r.Header)
 			if r.Method == http.MethodConnect {
