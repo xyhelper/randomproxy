@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gogf/gf/v2/container/garray"
 	"github.com/gogf/gf/v2/frame/g"
@@ -46,20 +47,20 @@ func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	g.Log().Debug(ctx, "host", host)
+	// g.Log().Debug(ctx, "host", host)
 	// 根据r.Host获取IP
 
-	serverIP, isipv6, err := getIPAddress(host)
+	_, isipv6, err := getIPAddress(host)
 	if err != nil {
 		g.Log().Error(ctx, err.Error())
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	if isipv6 {
-		g.Log().Debug(ctx, "serverIP", serverIP)
+		// g.Log().Debug(ctx, "serverIP", serverIP)
 		IPS = g.Cfg().MustGet(ctx, "IP6S").Slice()
 	} else {
-		g.Log().Debug(ctx, "serverIP", serverIP)
+		// g.Log().Debug(ctx, "serverIP", serverIP)
 		IPS = g.Cfg().MustGet(ctx, "IPS").Slice()
 	}
 	if len(IPS) == 0 {
@@ -84,6 +85,10 @@ func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 	dialer := &net.Dialer{
 		LocalAddr: &net.TCPAddr{IP: net.ParseIP(ip), Port: 0},
 	}
+	// 创建一个 WaitGroup 对象
+	var wg sync.WaitGroup
+
+	// 创建代理服务器连接
 	destConn, err := dialer.Dial("tcp", r.Host)
 	if err != nil {
 		g.Log().Error(ctx, err.Error())
@@ -102,11 +107,26 @@ func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 	}
-	// g.Dump(clientConn.RemoteAddr().String())
-
-	go transfer(destConn, clientConn)
-	go transfer(clientConn, destConn)
+	// 启动两个 goroutine 进行数据传输
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		transfer(destConn, clientConn)
+	}()
+	go func() {
+		defer wg.Done()
+		transfer(clientConn, destConn)
+	}()
 	g.Log().Debug(ctx, r.Host, clientConn.RemoteAddr().String(), destConn.RemoteAddr().String(), destConn.LocalAddr().String())
+
+	// 等待所有 goroutine 完成
+	wg.Wait()
+	// g.Log().Debug(ctx, "will close", r.Host, clientConn.RemoteAddr().String(), destConn.RemoteAddr().String(), destConn.LocalAddr().String())
+	// 关闭连接
+	clientConn.Close()
+	destConn.Close()
+	// g.Log().Debug(ctx, "close", r.Host, clientConn.RemoteAddr().String(), destConn.RemoteAddr().String(), destConn.LocalAddr().String())
+
 }
 
 func transfer(destination io.WriteCloser, source io.ReadCloser) {
@@ -151,7 +171,7 @@ func getIPAddress(domain string) (ip string, ipv6 bool, err error) {
 func main() {
 	ctx := gctx.New()
 	Addr := ":31280"
-	port := g.Cfg().MustGet(ctx, "PORT").String()
+	port := g.Cfg().MustGetWithEnv(ctx, "PORT").String()
 	if port != "" {
 		Addr = ":" + port
 	}
@@ -161,11 +181,11 @@ func main() {
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// g.DumpWithType(r.Header)
 			if r.Method == http.MethodConnect {
-				g.Log().Debug(ctx, "handleTunneling", r.Host)
+				// g.Log().Debug(ctx, "handleTunneling", r.Host)
 
 				handleTunneling(ctx, w, r)
 			} else {
-				g.Log().Debug(ctx, "handleHTTP", r.Host)
+				// g.Log().Debug(ctx, "handleHTTP", r.Host)
 				handleHTTP(ctx, w, r)
 			}
 		}),
