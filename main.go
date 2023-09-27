@@ -8,11 +8,17 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gogf/gf/v2/container/garray"
 	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/os/gcache"
 	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/util/gconv"
+)
+
+var (
+	DNSCache = gcache.New()
 )
 
 func randomIPV6FromSubnet(network string) (net.IP, error) {
@@ -50,7 +56,7 @@ func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 	// g.Log().Debug(ctx, "host", host)
 	// 根据r.Host获取IP
 
-	_, isipv6, err := getIPAddress(host)
+	_, isipv6, err := getIPAddress(ctx, host)
 	if err != nil {
 		g.Log().Error(ctx, err.Error())
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -155,10 +161,17 @@ func copyHeader(dst, src http.Header) {
 		}
 	}
 }
-func getIPAddress(domain string) (ip string, ipv6 bool, err error) {
-	ipAddresses, err := net.LookupHost(domain)
-	if err != nil {
-		return "", false, err
+func getIPAddress(ctx g.Ctx, domain string) (ip string, ipv6 bool, err error) {
+	var ipAddresses []string
+	// 先从缓存中获取
+	if v := DNSCache.MustGet(ctx, domain).Strings(); len(v) > 0 {
+		ipAddresses = v
+	} else {
+		ipAddresses, err = net.LookupHost(domain)
+		if err != nil {
+			return "", false, err
+		}
+		DNSCache.Set(ctx, domain, ipAddresses, 5*time.Minute)
 	}
 	for _, ipAddress := range ipAddresses {
 		// 如果是地址包含 : 说明是IPV6地址
