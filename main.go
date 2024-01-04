@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/container/garray"
+	"github.com/gogf/gf/v2/encoding/gbinary"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gcache"
 	"github.com/gogf/gf/v2/os/gctx"
@@ -20,6 +22,16 @@ import (
 var (
 	DNSCache = gcache.New()
 )
+
+// func RandomV6FromSub(subnet string) (net.IP, error) {
+// 	ip, subnet, err := net.ParseCIDR(network)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	// 获取子网掩码位长度
+// 	ones, bits := subnet.Mask.Size()
+// 	g.Log().Info(context.TODO(), "ones", ones, "bits", bits)
+// }
 
 func randomIPV6FromSubnet(network string) (net.IP, error) {
 	_, subnet, err := net.ParseCIDR(network)
@@ -32,18 +44,42 @@ func randomIPV6FromSubnet(network string) (net.IP, error) {
 	// g.Dump(bits)
 	// Get the prefix of the subnet.
 	prefix := subnet.IP.To16()
-	// println("prefix: ", prefix.String())
+	fmt.Println(prefix)
+	// g.Dump(prefix)
+
+	var perfixBits []gbinary.Bit
+
+	// 将perfix转换为 0 1 字节切片
+	for i := 0; i < len(prefix); i++ {
+		prefixBytes := byte(prefix[i])
+		bytesArray := []byte{prefixBytes}
+		bits := gbinary.DecodeBytesToBits(bytesArray)
+		// g.Dump(bits)
+		perfixBits = append(perfixBits, bits...)
+	}
+	// g.Dump(perfixBits)
+	// 将子网掩码位长度的后面的位数设置为随机数
+	for i := ones; i < len(perfixBits); i++ {
+		perfixBits[i] = gbinary.Bit(rand.Intn(2))
+	}
+
+	perfixBytes := gbinary.EncodeBitsToBytes(perfixBits)
+	ipnew := net.IP(perfixBytes)
+	// g.Dump(ipnew)
+
+	// println("prefix: ", ipnew.String())
 
 	// Seed the random number generator.
 	// rand.Seed(time.Now().UnixNano())
 
 	// Generate a random IPv6 address from the subnet.
-	for i := ones / 8; i < len(prefix); i++ {
-		prefix[i] = byte(rand.Intn(256))
-	}
+	// for i := ones / 8; i < len(prefix); i++ {
+	// 	prefix[i] = byte(rand.Intn(256))
+	// }
 
-	return prefix, nil
+	return ipnew, nil
 }
+
 func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 	var IPS []interface{}
 	// 获取域名不带端口

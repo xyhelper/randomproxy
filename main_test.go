@@ -6,7 +6,7 @@ import (
 )
 
 func TestIP(t *testing.T) {
-	randIP, err := randomIPV6FromSubnet("2102:470:f01e::/48")
+	randIP, err := randomIPV6FromSubnet("2102:470::/35")
 	if err != nil {
 		t.Fatal(err)
 	}
