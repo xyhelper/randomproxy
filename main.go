@@ -39,15 +39,10 @@ func randomIPV6FromSubnet(network string) (net.IP, error) {
 	}
 	// 获取子网掩码位长度
 	ones, _ := subnet.Mask.Size()
-	// g.Dump(ones)
-	// g.Dump(bits)
 	// Get the prefix of the subnet.
 	prefix := subnet.IP.To16()
-	// fmt.Println(prefix)
-	// g.Dump(prefix)
 
 	var perfixBits []gbinary.Bit
-
 	// 将perfix转换为 0 1 字节切片
 	for i := 0; i < len(prefix); i++ {
 		prefixBytes := byte(prefix[i])
@@ -64,17 +59,6 @@ func randomIPV6FromSubnet(network string) (net.IP, error) {
 
 	perfixBytes := gbinary.EncodeBitsToBytes(perfixBits)
 	ipnew := net.IP(perfixBytes)
-	// g.Dump(ipnew)
-
-	// println("prefix: ", ipnew.String())
-
-	// Seed the random number generator.
-	// rand.Seed(time.Now().UnixNano())
-
-	// Generate a random IPv6 address from the subnet.
-	// for i := ones / 8; i < len(prefix); i++ {
-	// 	prefix[i] = byte(rand.Intn(256))
-	// }
 
 	return ipnew, nil
 }
