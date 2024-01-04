@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -44,7 +43,7 @@ func randomIPV6FromSubnet(network string) (net.IP, error) {
 	// g.Dump(bits)
 	// Get the prefix of the subnet.
 	prefix := subnet.IP.To16()
-	fmt.Println(prefix)
+	// fmt.Println(prefix)
 	// g.Dump(prefix)
 
 	var perfixBits []gbinary.Bit
