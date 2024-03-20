@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"io"
 	"log"
 	"math/rand"
@@ -16,6 +17,11 @@ import (
 	"github.com/gogf/gf/v2/os/gcache"
 	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/util/gconv"
+)
+
+const (
+	proxyUser     = "username"
+	proxyPassword = "password"
 )
 
 var (
@@ -64,6 +70,21 @@ func randomIPV6FromSubnet(network string) (net.IP, error) {
 }
 
 func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
+	// 获取 Proxy-Authorization 头部
+	auth := r.Header.Get("Proxy-Authorization")
+	if auth == "" {
+		// 如果没有 Proxy-Authorization 头部，返回 407 状态码
+		w.Header().Set("Proxy-Authenticate", `Basic realm="proxy"`)
+		http.Error(w, "authorization required", http.StatusProxyAuthRequired)
+		return
+	}
+
+	// 验证 Proxy-Authorization 头部
+	const prefix = "Basic "
+	if !strings.HasPrefix(auth, prefix) || !checkAuth(ctx, auth[len(prefix):]) {
+		http.Error(w, "authorization failed", http.StatusForbidden)
+		return
+	}
 	var IPS []interface{}
 	// 获取域名不带端口
 	host, _, err := net.SplitHostPort(r.Host)
@@ -225,4 +246,18 @@ func main() {
 
 	log.Printf("Starting http/https proxy server on %s", server.Addr)
 	log.Fatal(server.ListenAndServe())
+}
+func checkAuth(ctx g.Ctx, auth string) bool {
+	c, err := base64.StdEncoding.DecodeString(auth)
+	if err != nil {
+		return false
+	}
+
+	parts := strings.SplitN(string(c), ":", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	g.Log().Debug(ctx, parts[0], parts[1])
+
+	return true
 }
