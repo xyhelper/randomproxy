@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"io"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/container/garray"
+	"github.com/gogf/gf/v2/crypto/gmd5"
 	"github.com/gogf/gf/v2/encoding/gbinary"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gcache"
@@ -38,7 +40,8 @@ var (
 // 	g.Log().Info(context.TODO(), "ones", ones, "bits", bits)
 // }
 
-func randomIPV6FromSubnet(network string) (net.IP, error) {
+func randomIPV6FromSubnet(network string, key string) (net.IP, error) {
+
 	_, subnet, err := net.ParseCIDR(network)
 	if err != nil {
 		return nil, err
@@ -62,9 +65,19 @@ func randomIPV6FromSubnet(network string) (net.IP, error) {
 	for i := ones; i < len(perfixBits); i++ {
 		perfixBits[i] = gbinary.Bit(rand.Intn(2))
 	}
+	if key != "" {
+		keymd5 := gmd5.MustEncryptString(key)
+		keybits := gbinary.DecodeBytesToBits([]byte(keymd5))
+		// g.Dump(keybits)
+		// g.Dump(len(keybits))
+		for i := ones; i < len(perfixBits); i++ {
+			perfixBits[i] = keybits[i]
+		}
+	}
 
 	perfixBytes := gbinary.EncodeBitsToBytes(perfixBits)
 	ipnew := net.IP(perfixBytes)
+	g.Log().Debug(context.TODO(), "key", key, "ipnew", ipnew.String())
 
 	return ipnew, nil
 }
@@ -81,10 +94,11 @@ func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 
 	// 验证 Proxy-Authorization 头部
 	const prefix = "Basic "
-	if !strings.HasPrefix(auth, prefix) || !checkAuth(ctx, auth[len(prefix):]) {
+	if !strings.HasPrefix(auth, prefix) || checkAuth(ctx, auth[len(prefix):]) == "" {
 		http.Error(w, "authorization failed", http.StatusForbidden)
 		return
 	}
+	key := checkAuth(ctx, auth[len(prefix):])
 	var IPS []interface{}
 	// 获取域名不带端口
 	host, _, err := net.SplitHostPort(r.Host)
@@ -123,7 +137,7 @@ func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 	ip := gconv.String(IP)
 	ipv6sub := g.Cfg().MustGet(ctx, "IP6SUB").String()
 	if isipv6 && ipv6sub != "" {
-		tempIP, _ := randomIPV6FromSubnet(ipv6sub)
+		tempIP, _ := randomIPV6FromSubnet(ipv6sub, key)
 		ip = tempIP.String()
 	}
 
@@ -247,17 +261,17 @@ func main() {
 	log.Printf("Starting http/https proxy server on %s", server.Addr)
 	log.Fatal(server.ListenAndServe())
 }
-func checkAuth(ctx g.Ctx, auth string) bool {
+func checkAuth(ctx g.Ctx, auth string) string {
 	c, err := base64.StdEncoding.DecodeString(auth)
 	if err != nil {
-		return false
+		return ""
 	}
 
 	parts := strings.SplitN(string(c), ":", 2)
 	if len(parts) != 2 {
-		return false
+		return ""
 	}
-	g.Log().Debug(ctx, parts[0], parts[1])
+	// g.Log().Debug(ctx, parts[0], parts[1])
 
-	return true
+	return string(c)
 }
