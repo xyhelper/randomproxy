@@ -28,15 +28,19 @@ var DNSCache = gcache.New()
 
 // randomIPV6FromSubnet generates a random IPv6 address from a given subnet.[根据指定的Port获取随机IP]
 func randomIPV6FromSubnet(network string, key string) (net.IP, error) {
+	// 解析CIDR和包含网络地址和子网掩码
 	_, subnet, err := net.ParseCIDR(network)
 	if err != nil {
 		return nil, err
 	}
 
+	// 获取子网掩码位长度
+	// 确定固定部分和需要随机化的部分
 	ones, bits := subnet.Mask.Size()
 	prefix := make([]byte, len(subnet.IP))
 	copy(prefix, subnet.IP)
 
+	// 使用端口生成MD5值
 	if key != "" {
 		hasher := md5.New()
 		hasher.Write([]byte(key))
@@ -50,6 +54,7 @@ func randomIPV6FromSubnet(network string, key string) (net.IP, error) {
 			}
 		}
 	} else {
+		// 随机数来生成IP地址的随机部分
 		for i := ones / 8; i < len(prefix); i++ {
 			if i*8 >= ones {
 				prefix[i] = byte(rand.Intn(256))
@@ -59,11 +64,13 @@ func randomIPV6FromSubnet(network string, key string) (net.IP, error) {
 
 	randomIP := net.IP(prefix)
 	if bits == 128 {
+		// 获取随机生成的IPV6地址
 		return randomIP, nil
 	}
-	return nil, err
+	return nil, fmt.Errorf("network is not an IPv6 subnet")
 }
 
+// handleTunneling is the handler for tunneling requests.
 func handleTunneling(ctx g.Ctx, key string, w http.ResponseWriter, r *http.Request) {
 	var IPS []interface{}
 	// 获取域名不带端口
