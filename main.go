@@ -1,44 +1,32 @@
 package main
 
 import (
-	"encoding/base64"
+	"context"
+	"fmt"
+	"github.com/gogf/gf/v2/os/gcache"
 	"io"
-	"log"
 	"math/rand"
 	"net"
 	"net/http"
+	"randomproxy/signals"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/spf13/cast"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/gogf/gf/v2/container/garray"
+	"github.com/gogf/gf/v2/crypto/gmd5"
 	"github.com/gogf/gf/v2/encoding/gbinary"
 	"github.com/gogf/gf/v2/frame/g"
-	"github.com/gogf/gf/v2/os/gcache"
 	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/util/gconv"
 )
 
-const (
-	proxyUser     = "username"
-	proxyPassword = "password"
-)
+var DNSCache = gcache.New()
 
-var (
-	DNSCache = gcache.New()
-)
-
-// func RandomV6FromSub(subnet string) (net.IP, error) {
-// 	ip, subnet, err := net.ParseCIDR(network)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	// 获取子网掩码位长度
-// 	ones, bits := subnet.Mask.Size()
-// 	g.Log().Info(context.TODO(), "ones", ones, "bits", bits)
-// }
-
-func randomIPV6FromSubnet(network string) (net.IP, error) {
+func randomIPV6FromSubnet(network string, key string) (net.IP, error) {
 	_, subnet, err := net.ParseCIDR(network)
 	if err != nil {
 		return nil, err
@@ -63,28 +51,24 @@ func randomIPV6FromSubnet(network string) (net.IP, error) {
 		perfixBits[i] = gbinary.Bit(rand.Intn(2))
 	}
 
+	if key != "" {
+		keymd5 := gmd5.MustEncryptString(key)
+		keybits := gbinary.DecodeBytesToBits([]byte(keymd5))
+		// g.Dump(keybits)
+		// g.Dump(len(keybits))
+		for i := ones; i < len(perfixBits); i++ {
+			perfixBits[i] = keybits[i]
+		}
+	}
+
 	perfixBytes := gbinary.EncodeBitsToBytes(perfixBits)
 	ipnew := net.IP(perfixBytes)
+	g.Log().Debug(context.TODO(), "key", key, "ipnew", ipnew.String())
 
 	return ipnew, nil
 }
 
-func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
-	// 获取 Proxy-Authorization 头部
-	auth := r.Header.Get("Proxy-Authorization")
-	if auth == "" {
-		// 如果没有 Proxy-Authorization 头部，返回 407 状态码
-		w.Header().Set("Proxy-Authenticate", `Basic realm="proxy"`)
-		http.Error(w, "authorization required", http.StatusProxyAuthRequired)
-		return
-	}
-
-	// 验证 Proxy-Authorization 头部
-	const prefix = "Basic "
-	if !strings.HasPrefix(auth, prefix) || !checkAuth(ctx, auth[len(prefix):]) {
-		http.Error(w, "authorization failed", http.StatusForbidden)
-		return
-	}
+func handleTunneling(ctx g.Ctx, key string, w http.ResponseWriter, r *http.Request) {
 	var IPS []interface{}
 	// 获取域名不带端口
 	host, _, err := net.SplitHostPort(r.Host)
@@ -123,7 +107,7 @@ func handleTunneling(ctx g.Ctx, w http.ResponseWriter, r *http.Request) {
 	ip := gconv.String(IP)
 	ipv6sub := g.Cfg().MustGet(ctx, "IP6SUB").String()
 	if isipv6 && ipv6sub != "" {
-		tempIP, _ := randomIPV6FromSubnet(ipv6sub)
+		tempIP, _ := randomIPV6FromSubnet(ipv6sub, key)
 		ip = tempIP.String()
 	}
 
@@ -181,26 +165,6 @@ func transfer(destination io.WriteCloser, source io.ReadCloser) {
 	io.Copy(destination, source)
 }
 
-func handleHTTP(ctx g.Ctx, w http.ResponseWriter, req *http.Request) {
-	resp, err := http.DefaultTransport.RoundTrip(req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-	defer resp.Body.Close()
-
-	copyHeader(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-
-func copyHeader(dst, src http.Header) {
-	for k, vv := range src {
-		for _, v := range vv {
-			dst.Add(k, v)
-		}
-	}
-}
 func getIPAddress(ctx g.Ctx, domain string) (ip string, ipv6 bool, err error) {
 	var ipAddresses []string
 	// 先从缓存中获取
@@ -221,43 +185,92 @@ func getIPAddress(ctx g.Ctx, domain string) (ip string, ipv6 bool, err error) {
 	}
 	return ipAddresses[0], false, nil
 }
+
 func main() {
-	ctx := gctx.New()
-	Addr := ":31280"
-	port := g.Cfg().MustGetWithEnv(ctx, "PORT").String()
-	if port != "" {
-		Addr = ":" + port
+	var (
+		ctx       = signals.WithStandardSignals(gctx.New())
+		startPort = g.Cfg().MustGetWithEnv(ctx, "PORT").String()
+		startLen  = g.Cfg().MustGetWithEnv(ctx, "PORT_LEN").Int()
+		ewg       = new(errgroup.Group)
+		servers   []*http.Server
+		lock      sync.Mutex
+	)
+
+	// set start port default value.
+	if startPort == "" {
+		startPort = "30000"
 	}
 
-	server := &http.Server{
-		Addr: Addr,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// g.DumpWithType(r.Header)
-			if r.Method == http.MethodConnect {
-				// g.Log().Debug(ctx, "handleTunneling", r.Host)
+	// set start length default value.
+	if startLen <= 0 {
+		startLen = 10000
+	}
 
-				handleTunneling(ctx, w, r)
-			} else {
-				// g.Log().Debug(ctx, "handleHTTP", r.Host)
-				handleHTTP(ctx, w, r)
+	// start multiple http servers.
+	for i := 0; i <= startLen; i++ {
+		currentPort := fmt.Sprintf(":%d", cast.ToInt(startPort)+i)
+		g.Log().Info(ctx, "Starting http/https proxy server on: ", currentPort)
+
+		ewg.Go(func() error {
+			server := &http.Server{
+				Addr: currentPort,
+				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodConnect {
+						handleTunneling(ctx, currentPort, w, r)
+					} else {
+						handleHTTP(ctx, w, r)
+					}
+				}),
 			}
-		}),
+
+			lock.Lock()
+			servers = append(servers, server)
+			lock.Unlock()
+			if err := server.ListenAndServe(); err != http.ErrServerClosed {
+				g.Log().Error(ctx, err)
+				return err
+			}
+
+			g.Log().Info(ctx, "Stopping http/https proxy server on: ", currentPort)
+			return nil
+		})
 	}
 
-	log.Printf("Starting http/https proxy server on %s", server.Addr)
-	log.Fatal(server.ListenAndServe())
+	go func() {
+		<-ctx.Done()
+		for _, server := range servers {
+			if err := server.Shutdown(context.Background()); err != nil {
+				g.Log().Error(ctx, err)
+			}
+		}
+	}()
+
+	if err := ewg.Wait(); err != nil {
+		g.Log().Error(ctx, err)
+	}
+
+	g.Log().Info(ctx, "Servers Shutdown")
 }
-func checkAuth(ctx g.Ctx, auth string) bool {
-	c, err := base64.StdEncoding.DecodeString(auth)
+
+// handleHTTP is the handler for http requests.
+func handleHTTP(ctx g.Ctx, w http.ResponseWriter, req *http.Request) {
+	resp, err := http.DefaultTransport.RoundTrip(req)
 	if err != nil {
-		return false
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
 	}
+	defer resp.Body.Close()
 
-	parts := strings.SplitN(string(c), ":", 2)
-	if len(parts) != 2 {
-		return false
+	copyHeader(w.Header(), resp.Header)
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// copyHeader copies the header from src to dst.
+func copyHeader(dst, src http.Header) {
+	for k, vv := range src {
+		for _, v := range vv {
+			dst.Add(k, v)
+		}
 	}
-	g.Log().Debug(ctx, parts[0], parts[1])
-
-	return true
 }

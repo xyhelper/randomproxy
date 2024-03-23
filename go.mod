@@ -2,7 +2,11 @@ module randomproxy
 
 go 1.20
 
-require github.com/gogf/gf/v2 v2.5.1
+require (
+	github.com/gogf/gf/v2 v2.5.1
+	github.com/spf13/cast v1.6.0
+	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
+)
 
 require (
 	github.com/BurntSushi/toml v1.3.2 // indirect
