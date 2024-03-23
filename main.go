@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
-	"github.com/gogf/gf/v2/os/gcache"
 	"io"
 	"math/rand"
 	"net"
@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gogf/gf/v2/os/gcache"
+
 	"github.com/spf13/cast"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/gogf/gf/v2/container/garray"
-	"github.com/gogf/gf/v2/crypto/gmd5"
-	"github.com/gogf/gf/v2/encoding/gbinary"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/util/gconv"
@@ -26,46 +26,42 @@ import (
 
 var DNSCache = gcache.New()
 
+// randomIPV6FromSubnet generates a random IPv6 address from a given subnet.[根据指定的Port获取随机IP]
 func randomIPV6FromSubnet(network string, key string) (net.IP, error) {
 	_, subnet, err := net.ParseCIDR(network)
 	if err != nil {
 		return nil, err
 	}
-	// 获取子网掩码位长度
-	ones, _ := subnet.Mask.Size()
-	// Get the prefix of the subnet.
-	prefix := subnet.IP.To16()
 
-	var perfixBits []gbinary.Bit
-	// 将perfix转换为 0 1 字节切片
-	for i := 0; i < len(prefix); i++ {
-		prefixBytes := byte(prefix[i])
-		bytesArray := []byte{prefixBytes}
-		bits := gbinary.DecodeBytesToBits(bytesArray)
-		// g.Dump(bits)
-		perfixBits = append(perfixBits, bits...)
-	}
-	// g.Dump(perfixBits)
-	// 将子网掩码位长度的后面的位数设置为随机数
-	for i := ones; i < len(perfixBits); i++ {
-		perfixBits[i] = gbinary.Bit(rand.Intn(2))
-	}
+	ones, bits := subnet.Mask.Size()
+	prefix := make([]byte, len(subnet.IP))
+	copy(prefix, subnet.IP)
 
 	if key != "" {
-		keymd5 := gmd5.MustEncryptString(key)
-		keybits := gbinary.DecodeBytesToBits([]byte(keymd5))
-		// g.Dump(keybits)
-		// g.Dump(len(keybits))
-		for i := ones; i < len(perfixBits); i++ {
-			perfixBits[i] = keybits[i]
+		hasher := md5.New()
+		hasher.Write([]byte(key))
+		hashedKey := hasher.Sum(nil)
+
+		for i := ones / 8; i < len(prefix); i++ {
+			if i < len(hashedKey) {
+				prefix[i] = hashedKey[i-(ones/8)]
+			} else {
+				prefix[i] = byte(rand.Intn(256))
+			}
+		}
+	} else {
+		for i := ones / 8; i < len(prefix); i++ {
+			if i*8 >= ones {
+				prefix[i] = byte(rand.Intn(256))
+			}
 		}
 	}
 
-	perfixBytes := gbinary.EncodeBitsToBytes(perfixBits)
-	ipnew := net.IP(perfixBytes)
-	g.Log().Debug(context.TODO(), "key", key, "ipnew", ipnew.String())
-
-	return ipnew, nil
+	randomIP := net.IP(prefix)
+	if bits == 128 {
+		return randomIP, nil
+	}
+	return nil, err
 }
 
 func handleTunneling(ctx g.Ctx, key string, w http.ResponseWriter, r *http.Request) {
@@ -196,6 +192,9 @@ func main() {
 		lock      sync.Mutex
 	)
 
+	// set random seed.
+	rand.Seed(time.Now().UnixNano())
+
 	// set start port default value.
 	if startPort == "" {
 		startPort = "30000"
@@ -209,7 +208,7 @@ func main() {
 	// start multiple http servers.
 	for i := 0; i <= startLen; i++ {
 		currentPort := fmt.Sprintf(":%d", cast.ToInt(startPort)+i)
-		g.Log().Info(ctx, "Starting http/https proxy server on: ", currentPort)
+		g.Log().Info(ctx, "Starting http/https proxy server on ", currentPort)
 
 		ewg.Go(func() error {
 			server := &http.Server{
@@ -231,7 +230,7 @@ func main() {
 				return err
 			}
 
-			g.Log().Info(ctx, "Stopping http/https proxy server on: ", currentPort)
+			g.Log().Info(ctx, "Stopping http/https proxy server on ", currentPort)
 			return nil
 		})
 	}

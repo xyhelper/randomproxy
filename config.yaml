@@ -1,4 +1,4 @@
 IPS:
   - "172.17.0.6" # IPv4 address 应急回落
 IP6SUB: "2600:6400:41cf::/48"  # IPv6 subnet
-PORT: 32280
+PORT: 30000
