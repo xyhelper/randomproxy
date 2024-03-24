@@ -72,16 +72,12 @@ func randomIPV6FromSubnet(network string, key string) (net.IP, error) {
 
 // handleTunneling is the handler for tunneling requests.
 func handleTunneling(ctx g.Ctx, key string, w http.ResponseWriter, r *http.Request) {
-	var IPS []interface{}
-	// 获取域名不带端口
 	host, _, err := net.SplitHostPort(r.Host)
 	if err != nil {
 		g.Log().Error(ctx, err.Error())
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	// g.Log().Debug(ctx, "host", host)
-	// 根据r.Host获取IP
 
 	_, isipv6, err := getIPAddress(ctx, host)
 	if err != nil {
@@ -89,13 +85,14 @@ func handleTunneling(ctx g.Ctx, key string, w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
+
+	var IPS []interface{}
 	if isipv6 {
-		// g.Log().Debug(ctx, "serverIP", serverIP)
 		IPS = g.Cfg().MustGet(ctx, "IP6S").Slice()
 	} else {
-		// g.Log().Debug(ctx, "serverIP", serverIP)
 		IPS = g.Cfg().MustGet(ctx, "IPS").Slice()
 	}
+
 	if len(IPS) == 0 {
 		IPS = g.Cfg().MustGet(ctx, "IPS").Slice()
 	}
@@ -107,6 +104,7 @@ func handleTunneling(ctx g.Ctx, key string, w http.ResponseWriter, r *http.Reque
 		http.Error(w, "no ip found", http.StatusServiceUnavailable)
 		return
 	}
+
 	ip := gconv.String(IP)
 	ipv6sub := g.Cfg().MustGet(ctx, "IP6SUB").String()
 	if isipv6 && ipv6sub != "" {
@@ -114,21 +112,21 @@ func handleTunneling(ctx g.Ctx, key string, w http.ResponseWriter, r *http.Reque
 		ip = tempIP.String()
 	}
 
-	// g.Log().Debug(ctx, "ip", ip)
 	dialer := &net.Dialer{
-		LocalAddr: &net.TCPAddr{IP: net.ParseIP(ip), Port: 0},
+		LocalAddr: &net.TCPAddr{
+			IP:   net.ParseIP(ip),
+			Port: 0,
+		},
 	}
-	// 创建一个 WaitGroup 对象
-	var wg sync.WaitGroup
 
-	// 创建代理服务器连接
 	destConn, err := dialer.Dial("tcp", r.Host)
 	if err != nil {
 		g.Log().Error(ctx, err.Error())
-
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
+	defer destConn.Close()
+
 	w.WriteHeader(http.StatusOK)
 
 	hijacker, ok := w.(http.Hijacker)
@@ -136,11 +134,16 @@ func handleTunneling(ctx g.Ctx, key string, w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
 		return
 	}
+
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
 	}
-	// 启动两个 goroutine 进行数据传输
+	defer clientConn.Close()
+
+	var wg sync.WaitGroup
+
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -150,22 +153,19 @@ func handleTunneling(ctx g.Ctx, key string, w http.ResponseWriter, r *http.Reque
 		defer wg.Done()
 		transfer(clientConn, destConn)
 	}()
+
 	g.Log().Debug(ctx, r.Host, clientConn.RemoteAddr().String(), destConn.RemoteAddr().String(), destConn.LocalAddr().String())
 
-	// 等待所有 goroutine 完成
 	wg.Wait()
-	// g.Log().Debug(ctx, "will close", r.Host, clientConn.RemoteAddr().String(), destConn.RemoteAddr().String(), destConn.LocalAddr().String())
-	// 关闭连接
-	clientConn.Close()
-	destConn.Close()
-	// g.Log().Debug(ctx, "close", r.Host, clientConn.RemoteAddr().String(), destConn.RemoteAddr().String(), destConn.LocalAddr().String())
-
 }
 
-func transfer(destination io.WriteCloser, source io.ReadCloser) {
-	defer destination.Close()
-	defer source.Close()
-	io.Copy(destination, source)
+// transfer copies data from src to dst and vice versa.
+func transfer(dst io.WriteCloser, src io.ReadCloser) {
+	defer func() {
+		_ = dst.Close()
+		_ = src.Close()
+	}()
+	_, _ = io.Copy(dst, src)
 }
 
 func getIPAddress(ctx g.Ctx, domain string) (ip string, ipv6 bool, err error) {
@@ -216,7 +216,6 @@ func main() {
 	for i := 0; i <= startLen; i++ {
 		currentPort := fmt.Sprintf(":%d", cast.ToInt(startPort)+i)
 		g.Log().Info(ctx, "Starting http/https proxy server on ", currentPort)
-
 		ewg.Go(func() error {
 			server := &http.Server{
 				Addr: currentPort,
