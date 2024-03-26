@@ -27,6 +27,8 @@ import (
 var DNSCache = gcache.New()
 
 // randomIPV6FromSubnet generates a random IPv6 address from a given subnet.[根据指定的Port获取随机IP]
+// 直接用端口号替换的/48到/64中间的16位
+// 端口号0-65535 正好16位
 func randomIPV6FromSubnet(network string, key string) (net.IP, error) {
 	// 解析CIDR和包含网络地址和子网掩码
 	_, subnet, err := net.ParseCIDR(network)
@@ -214,9 +216,10 @@ func main() {
 
 	// start multiple http servers.
 	for i := 0; i <= startLen; i++ {
-		currentPort := fmt.Sprintf(":%d", cast.ToInt(startPort)+i)
-		g.Log().Info(ctx, "Starting http/https proxy server on ", currentPort)
+		i := i
 		ewg.Go(func() error {
+			currentPort := fmt.Sprintf(":%d", cast.ToInt(startPort)+i)
+			g.Log().Info(ctx, "Starting http/https proxy server on ", currentPort)
 			server := &http.Server{
 				Addr: currentPort,
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
